@@ -6823,16 +6823,3 @@ const std::vector<std::vector<AssociativePair>> &get_i32_ops_table(const vector<
 
 }
 }
-
-using namespace Halide;
-using namespace Halide::Internal;
-
-int main() {
-    Expr x = Variable::make(Int(32), "x");
-    Expr y = Variable::make(Int(32), "y");
-    Expr expr = Min::make(x, y);
-    const auto &table = get_i32_ops_table({expr});
-    std::cout << "Op: " << table[0][0].op << " with id: " << table[0][0].identity << "\n";
-    return 0;
-}
-
