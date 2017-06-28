@@ -167,6 +167,14 @@ bool expr_is_pure(const Expr &e) {
     return pure.result;
 }
 
+bool same_as(const std::vector<Expr> &a, const std::vector<Expr> &b) {
+    if (a.size() != b.size()) return false;
+    for (size_t i = 0; i < a.size(); i++) {
+        if (!a[i].same_as(b[i])) return false;
+    }
+    return true;
+}
+
 #if LOG_EXPR_MUTATIONS || LOG_STMT_MUTATIONS
 static int debug_indent = 0;
 #endif
@@ -4630,18 +4638,17 @@ private:
     }
 
     void visit(const Shuffle *op) {
-        if (op->is_extract_element() &&
-            (op->vectors[0].as<Ramp>() ||
-             op->vectors[0].as<Broadcast>())) {
-            // Extracting a single lane of a ramp or broadcast
-            if (const Ramp *r = op->vectors[0].as<Ramp>()) {
-                expr = mutate(r->base + op->indices[0]*r->stride);
-            } else if (const Broadcast *b = op->vectors[0].as<Broadcast>()) {
-                expr = mutate(b->value);
-            } else {
-                internal_error << "Unreachable";
+        if (op->is_extract_element() && op->vectors.size() > 1) {
+            int lane = op->extract_element_lane();
+            for (const Expr &i : op->vectors) {
+                if (lane < i.type().lanes()) {
+                    expr = mutate(Shuffle::make_extract_element(i, lane));
+                    return;
+                } else {
+                    lane -= i.type().lanes();
+                }
             }
-            return;
+            internal_error << "Shuffle index out of bounds" << Expr(op) << "\n";
         }
 
         // Mutate the vectors
@@ -4654,6 +4661,68 @@ private:
             }
             new_vectors.push_back(new_vector);
         }
+
+        if (op->is_extract_element()) {
+            // We should have removed the unused vectors prior to recursion above.
+            internal_assert(new_vectors.size() == 1);
+            Expr vector = new_vectors[0];
+            int lane = op->extract_element_lane();
+            if (const Ramp *r = vector.as<Ramp>()) {
+                expr = mutate(r->base + op->indices[0]*r->stride);
+                return;
+            } else if (const Broadcast *b = vector.as<Broadcast>()) {
+                expr = mutate(b->value);
+                return;
+            } else if (const Shuffle *s = vector.as<Shuffle>()) {
+                expr = mutate(Shuffle::make(s->vectors, {s->indices[lane]}));
+                return;
+            }
+        }
+
+        #if 0
+        // This is interesting, but too powerful, because it breaks
+        // special shuffles that we optimize for (e.g. interleaves).
+        // It's possible that making is_interleave and callers of that
+        // more robust would enable this code to be turned on.
+        bool any_shuffle = false;
+        for (const Expr &i : new_vectors) {
+            if (i.as<Shuffle>()) {
+                any_shuffle = true;
+                break;
+            }
+        }
+
+        if (any_shuffle) {
+            std::vector<int> new_indices = op->indices;
+            std::vector<Expr> flat_vectors;
+            int input_lanes = 0;
+            for (const Expr &i : new_vectors) {
+                if (const Shuffle *si = i.as<Shuffle>()) {
+                    int si_input_lanes = 0;
+                    for (const Expr &j : si->vectors) {
+                        si_input_lanes += j.type().lanes();
+                        flat_vectors.push_back(j);
+                    }
+                    for (int &j : new_indices) {
+                        if (j >= input_lanes + si->type.lanes()) {
+                            // This index refers to a vector after this
+                            // shuffle, adjust it.
+                            j += si_input_lanes - si->type.lanes();
+                        } else if (j >= input_lanes) {
+                            // This index needs to be adjusted by the shuffle.
+                            j = si->indices[j - input_lanes] + input_lanes;
+                        }
+                    }
+                    input_lanes += si_input_lanes;
+                } else {
+                    flat_vectors.push_back(i);
+                    input_lanes += i.type().lanes();
+                }
+            }
+            expr = mutate(Shuffle::make(flat_vectors, new_indices));
+            return;
+        }
+        #endif
 
         // Try to convert a load with shuffled indices into a
         // shuffle of a dense load.
@@ -4696,8 +4765,7 @@ private:
         // Try to collapse a shuffle of broadcasts into a single
         // broadcast. Note that it doesn't matter what the indices
         // are.
-        const Broadcast *b1 = new_vectors[0].as<Broadcast>();
-        if (b1) {
+        if (const Broadcast *b1 = new_vectors[0].as<Broadcast>()) {
             bool can_collapse = true;
             for (size_t i = 1; i < new_vectors.size() && can_collapse; i++) {
                 if (const Broadcast *b2 = new_vectors[i].as<Broadcast>()) {
@@ -4721,8 +4789,7 @@ private:
             int terms = (int)new_vectors.size();
 
             // Try to collapse an interleave of ramps into a single ramp.
-            const Ramp *r = new_vectors[0].as<Ramp>();
-            if (r) {
+            if (const Ramp *r = new_vectors[0].as<Ramp>()) {
                 bool can_collapse = true;
                 for (size_t i = 1; i < new_vectors.size() && can_collapse; i++) {
                     // If we collapse these terms into a single ramp,
@@ -4789,8 +4856,7 @@ private:
             }
         } else if (op->is_concat()) {
             // Try to collapse a concat of ramps into a single ramp.
-            const Ramp *r = new_vectors[0].as<Ramp>();
-            if (r) {
+            if (const Ramp *r = new_vectors[0].as<Ramp>()) {
                 bool can_collapse = true;
                 for (size_t i = 1; i < new_vectors.size() && can_collapse; i++) {
                     Expr diff;
@@ -4808,6 +4874,25 @@ private:
                 }
                 if (can_collapse) {
                     expr = Ramp::make(r->base, r->stride, op->indices.size());
+                    return;
+                }
+            }
+
+            // Try to collapse a concat of shuffles into a single shuffle.
+            if (const Shuffle *s = new_vectors[0].as<Shuffle>()) {
+                bool can_collapse = true;
+                vector<int> new_indices = s->indices;
+                for (size_t i = 1; i < new_vectors.size() && can_collapse; i++) {
+                    if (const Shuffle *si = new_vectors[i].as<Shuffle>()) {
+                        if (same_as(s->vectors, si->vectors)) {
+                            new_indices.insert(new_indices.end(), si->indices.begin(), si->indices.end());
+                        } else {
+                            can_collapse = false;
+                        }
+                    }
+                }
+                if (can_collapse) {
+                    expr = Shuffle::make(s->vectors, new_indices);
                     return;
                 }
             }
