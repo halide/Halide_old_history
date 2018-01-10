@@ -456,6 +456,8 @@ private:
      * destructors. As destructors are registered, code gets added
      * to this block. */
     llvm::BasicBlock *destructor_block;
+    llvm::BasicBlock *continue_block;
+    llvm::Value *sync_region;
 
     /** Embed an instance of halide_filter_metadata_t in the code, using
      * the given name (by convention, this should be ${FUNCTIONNAME}_metadata)

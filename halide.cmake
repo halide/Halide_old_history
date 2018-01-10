@@ -529,6 +529,8 @@ function(_halide_library_runtime HALIDE_TARGET OUTVAR)
     # an appropriate spot in link order.
     set(RT_LIBS )
 
+    list(APPEND RT_LIBS "cilkrts")
+    
     # opengl
     _halide_has_target_feature("${HALIDE_TARGET}" opengl HAS_OPENGL)
     if("${HAS_OPENGL}")

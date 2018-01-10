@@ -90,7 +90,7 @@ if (BUILD_AOT_TUTORIAL)
   target_include_directories(lesson_10_aot_compilation_run PRIVATE "${CMAKE_BINARY_DIR}/include")
 
   if (NOT WIN32)
-    target_link_libraries(lesson_10_aot_compilation_run PRIVATE dl pthread)
+    target_link_libraries(lesson_10_aot_compilation_run PRIVATE dl cilkrts pthread)
   endif()
 
 endif()

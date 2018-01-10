@@ -41,6 +41,8 @@ install:
   - wget http://llvm.org/releases/${LLVM_VERSION}/clang+llvm-${LLVM_VERSION}-x86_64-linux-gnu-debian8.tar.xz
   - tar xvf clang+llvm-${LLVM_VERSION}-x86_64-linux-gnu-debian8.tar.xz
   - sudo mv clang+llvm-${LLVM_VERSION}-x86_64-linux-gnu-debian8 /usr/local/llvm
+  # Get cilkrts for initial parallel backend
+  - sudo apt-get -y --force-yes install libcilkrts5
   # Get libpng for the tutorials and apps
   - sudo apt-get -y --force-yes install libpng-dev
   # For generating docs

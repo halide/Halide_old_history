@@ -37,6 +37,7 @@ def halide_language_linkopts():
   _linux_opts = [
       "-rdynamic",
       "-ldl",
+      "-lcilkrts",
       "-lpthread",
       "-lz"
   ]
@@ -62,6 +63,7 @@ def halide_language_linkopts():
 def halide_runtime_linkopts():
   _posix_opts = [
       "-ldl",
+      "-lcilkrts",
       "-lpthread",
   ]
   _android_opts = [
